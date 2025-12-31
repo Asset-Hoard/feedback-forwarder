@@ -1,0 +1,7 @@
+name = "asset-hoard-feedback"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Secrets (set via wrangler secret put or GitHub Actions):
+# - RESEND_API_KEY
+# - TO_EMAIL (where feedback is delivered, e.g. mark@assethoard.com)

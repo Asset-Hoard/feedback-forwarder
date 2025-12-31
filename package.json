@@ -1,0 +1,17 @@
+{
+  "name": "asset-hoard-feedback",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "resend": "^4.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.16",
+    "wrangler": "^3.0.0"
+  }
+}
