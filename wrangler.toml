@@ -1,8 +1,25 @@
 name = "asset-hoard-feedback"
 main = "src/index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-12-01"
+
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
 
 # Secrets (set via wrangler secret put or GitHub Actions):
 # - RESEND_API_KEY
-# - TO_EMAIL (where feedback is delivered, e.g. mark@assethoard.com)
+# - TO_EMAIL (where feedback is delivered, e.g. mark@example.com)
 # - FROM_EMAIL (email address in resend)
