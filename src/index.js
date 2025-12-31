@@ -66,7 +66,7 @@ export default {
       const resend = new Resend(env.RESEND_API_KEY);
 
       const { error } = await resend.emails.send({
-        to: env.TO_EMAIL,
+        to: [env.TO_EMAIL],
         replyTo: email,
         from: env.FROM_EMAIL,
         subject: 'Feedback from Asset Hoard',
