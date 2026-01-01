@@ -1,0 +1,4 @@
+RESEND_API_KEY=your_resend_api_key_here
+TO_EMAIL=your_email@example.com
+FROM_EMAIL=feedback@yourdomain.com
+HMAC_SECRET=your_random_secret_key_here

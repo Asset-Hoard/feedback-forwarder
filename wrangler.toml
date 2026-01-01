@@ -23,3 +23,4 @@ head_sampling_rate = 1
 # - RESEND_API_KEY
 # - TO_EMAIL (where feedback is delivered, e.g. mark@example.com)
 # - FROM_EMAIL (email address in resend)
+# - HMAC_SECRET (secret key for token signing)

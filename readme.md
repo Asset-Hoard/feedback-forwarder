@@ -25,6 +25,7 @@ A Cloudflare Worker that proxies feedback submissions from the Asset Hoard deskt
    - Add `RESEND_API_KEY` with your Resend API key
    - Add `TO_EMAIL` with your email (e.g., `mark@example.com`)
    - Add `FROM_EMAIL` with the verified sender email (e.g., `feedback@assethoard.com`)
+   - Add `HMAC_SECRET` with a strong random string (32+ characters recommended)
 4. Go to **Settings → Deployments**
 5. Under **GitHub**, click **Connect a repository**
 6. Select your GitHub repo and authorize Cloudflare
@@ -42,6 +43,7 @@ npm install
 npx wrangler secret put RESEND_API_KEY
 npx wrangler secret put TO_EMAIL
 npx wrangler secret put FROM_EMAIL
+npx wrangler secret put HMAC_SECRET
 npm run deploy
 ```
 
@@ -64,6 +66,7 @@ npm run deploy
    RESEND_API_KEY=your_resend_api_key_here
    TO_EMAIL=your_email@assethoard.com
    FROM_EMAIL=feedback@assethoard.com
+   HMAC_SECRET=your_random_secret_key_here
    ```
 
 3. **Start the local development server:**
@@ -83,12 +86,17 @@ npm test
 
 ### Manual Testing
 
-You can test the endpoint with curl:
+The API uses HMAC token validation to prevent abuse. First, get a token, then use it in the POST request:
 
 ```bash
+# Step 1: Get a token
+TOKEN=$(curl -s http://localhost:8787 | jq -r '.token')
+
+# Step 2: Submit feedback with the token
 curl -X POST http://localhost:8787 \
   -H "Content-Type: application/json" \
   -d '{
+    "checktoken": "'"$TOKEN"'",
     "name": "Test User",
     "email": "test@example.com",
     "message": "This is a test",
@@ -98,12 +106,30 @@ curl -X POST http://localhost:8787 \
 
 ## API Usage
 
-Send a POST request to your worker URL:
+### Step 1: Get a Token
+
+Send a GET request to obtain an HMAC-signed token:
+
+```bash
+curl https://asset-hoard-feedback.your-subdomain.workers.dev
+```
+
+Response:
+```json
+{ "token": "1735760400000.abc123..." }
+```
+
+Tokens expire after 5 minutes.
+
+### Step 2: Submit Feedback
+
+Send a POST request with the token:
 
 ```bash
 curl -X POST https://asset-hoard-feedback.your-subdomain.workers.dev \
   -H "Content-Type: application/json" \
   -d '{
+    "checktoken": "1735760400000.abc123...",
     "name": "John Doe",
     "email": "john@example.com",
     "message": "Great app!",
@@ -115,6 +141,7 @@ curl -X POST https://asset-hoard-feedback.your-subdomain.workers.dev \
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `checktoken` | string | Yes | HMAC token from GET request |
 | `message` | string | Yes | The feedback message |
 | `email` | string | Yes | Sender's email for replies |
 | `name` | string | No | Sender's name |
@@ -122,9 +149,10 @@ curl -X POST https://asset-hoard-feedback.your-subdomain.workers.dev \
 
 ### Responses
 
-- `200` - Success: `{ "success": true }`
+- `200` - Success: `{ "success": true }` or `{ "token": "..." }`
 - `400` - Bad request (missing message or invalid JSON)
-- `405` - Method not allowed (only POST is accepted)
+- `401` - Unauthorized (missing, invalid, or expired token)
+- `405` - Method not allowed
 - `500` - Server error
 
 ## License

@@ -6,6 +6,26 @@ export const escapeHtml = (str) => str
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
 
+const TOKEN_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+
+async function generateHmac(message, secret) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+async function verifyHmac(message, signature, secret) {
+  const expectedSignature = await generateHmac(message, secret);
+  return signature === expectedSignature;
+}
+
 export default {
   async fetch(request, env) {
     // Handle CORS
@@ -13,8 +33,22 @@ export default {
       return new Response(null, {
         headers: {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type'
+        }
+      });
+    }
+
+    // GET endpoint: Generate HMAC token
+    if (request.method === 'GET') {
+      const timestamp = Date.now().toString();
+      const signature = await generateHmac(timestamp, env.HMAC_SECRET);
+      const token = `${timestamp}.${signature}`;
+
+      return new Response(JSON.stringify({ token }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
         }
       });
     }
@@ -36,7 +70,51 @@ export default {
       });
     }
 
-    const { name, email, message, appVersion } = body;
+    const { name, email, message, appVersion, checktoken } = body;
+
+    // Validate token
+    if (!checktoken) {
+      return new Response(JSON.stringify({ error: 'Token is required' }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+
+    const [timestamp, signature] = checktoken.split('.');
+    if (!timestamp || !signature) {
+      return new Response(JSON.stringify({ error: 'Invalid token format' }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+
+    const tokenAge = Date.now() - parseInt(timestamp, 10);
+    if (isNaN(tokenAge) || tokenAge > TOKEN_EXPIRY_MS) {
+      return new Response(JSON.stringify({ error: 'Token expired' }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+
+    const isValidSignature = await verifyHmac(timestamp, signature, env.HMAC_SECRET);
+    if (!isValidSignature) {
+      return new Response(JSON.stringify({ error: 'Invalid token signature' }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
 
     if (!message || message.trim().length === 0) {
       return new Response(JSON.stringify({ error: 'Message is required' }), {

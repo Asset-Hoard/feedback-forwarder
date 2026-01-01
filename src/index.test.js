@@ -16,8 +16,16 @@ vi.mock('resend', () => ({
 const mockEnv = {
   RESEND_API_KEY: 'test_key',
   TO_EMAIL: 'test@example.com',
-  FROM_EMAIL: 'from@example.com'
+  FROM_EMAIL: 'from@example.com',
+  HMAC_SECRET: 'test_secret_key_for_hmac_signing'
 };
+
+async function getValidToken() {
+  const request = createRequest('GET');
+  const response = await worker.fetch(request, mockEnv);
+  const body = await response.json();
+  return body.token;
+}
 
 function createRequest(method, body = null) {
   const options = { method };
@@ -64,19 +72,21 @@ describe('Feedback Forwarder Worker', () => {
 
       expect(response.status).toBe(200);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST, OPTIONS');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
       expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type');
     });
   });
 
   describe('HTTP Methods', () => {
-    it('should reject GET requests', async () => {
+    it('should accept GET requests and return a token', async () => {
       const request = createRequest('GET');
       const response = await worker.fetch(request, mockEnv);
 
-      expect(response.status).toBe(405);
+      expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.error).toBe('Method not allowed');
+      expect(body.token).toBeDefined();
+      expect(body.token).toMatch(/^\d+\..+$/);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     });
 
     it('should reject PUT requests', async () => {
@@ -98,6 +108,75 @@ describe('Feedback Forwarder Worker', () => {
     });
   });
 
+  describe('Token Validation', () => {
+    it('should reject POST without token', async () => {
+      const request = createRequest('POST', {
+        email: 'test@example.com',
+        message: 'Test'
+      });
+      const response = await worker.fetch(request, mockEnv);
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.error).toBe('Token is required');
+    });
+
+    it('should reject POST with invalid token format', async () => {
+      const request = createRequest('POST', {
+        checktoken: 'invalid-token-no-dot',
+        email: 'test@example.com',
+        message: 'Test'
+      });
+      const response = await worker.fetch(request, mockEnv);
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid token format');
+    });
+
+    it('should reject POST with expired token', async () => {
+      const expiredTimestamp = (Date.now() - 6 * 60 * 1000).toString(); // 6 minutes ago
+      const request = createRequest('POST', {
+        checktoken: `${expiredTimestamp}.fakesignature`,
+        email: 'test@example.com',
+        message: 'Test'
+      });
+      const response = await worker.fetch(request, mockEnv);
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.error).toBe('Token expired');
+    });
+
+    it('should reject POST with invalid signature', async () => {
+      const timestamp = Date.now().toString();
+      const request = createRequest('POST', {
+        checktoken: `${timestamp}.invalidsignature`,
+        email: 'test@example.com',
+        message: 'Test'
+      });
+      const response = await worker.fetch(request, mockEnv);
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid token signature');
+    });
+
+    it('should accept POST with valid token', async () => {
+      const token = await getValidToken();
+      const request = createRequest('POST', {
+        checktoken: token,
+        email: 'test@example.com',
+        message: 'Test'
+      });
+      const response = await worker.fetch(request, mockEnv);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.success).toBe(true);
+    });
+  });
+
   describe('Input Validation', () => {
     it('should reject invalid JSON', async () => {
       const request = createRequest('POST', 'not valid json');
@@ -109,7 +188,8 @@ describe('Feedback Forwarder Worker', () => {
     });
 
     it('should require message field', async () => {
-      const request = createRequest('POST', { email: 'test@example.com' });
+      const token = await getValidToken();
+      const request = createRequest('POST', { checktoken: token, email: 'test@example.com' });
       const response = await worker.fetch(request, mockEnv);
 
       expect(response.status).toBe(400);
@@ -118,7 +198,8 @@ describe('Feedback Forwarder Worker', () => {
     });
 
     it('should reject empty message', async () => {
-      const request = createRequest('POST', { email: 'test@example.com', message: '   ' });
+      const token = await getValidToken();
+      const request = createRequest('POST', { checktoken: token, email: 'test@example.com', message: '   ' });
       const response = await worker.fetch(request, mockEnv);
 
       expect(response.status).toBe(400);
@@ -127,7 +208,8 @@ describe('Feedback Forwarder Worker', () => {
     });
 
     it('should require email field', async () => {
-      const request = createRequest('POST', { message: 'Test feedback' });
+      const token = await getValidToken();
+      const request = createRequest('POST', { checktoken: token, message: 'Test feedback' });
       const response = await worker.fetch(request, mockEnv);
 
       expect(response.status).toBe(400);
@@ -136,7 +218,8 @@ describe('Feedback Forwarder Worker', () => {
     });
 
     it('should reject empty email', async () => {
-      const request = createRequest('POST', { message: 'Test feedback', email: '  ' });
+      const token = await getValidToken();
+      const request = createRequest('POST', { checktoken: token, message: 'Test feedback', email: '  ' });
       const response = await worker.fetch(request, mockEnv);
 
       expect(response.status).toBe(400);
@@ -147,7 +230,9 @@ describe('Feedback Forwarder Worker', () => {
 
   describe('Successful Requests', () => {
     it('should accept valid feedback with all fields', async () => {
+      const token = await getValidToken();
       const request = createRequest('POST', {
+        checktoken: token,
         name: 'John Doe',
         email: 'john@example.com',
         message: 'Great app!',
@@ -162,7 +247,9 @@ describe('Feedback Forwarder Worker', () => {
     });
 
     it('should accept valid feedback with only required fields', async () => {
+      const token = await getValidToken();
       const request = createRequest('POST', {
+        checktoken: token,
         email: 'john@example.com',
         message: 'Great app!'
       });
@@ -178,7 +265,9 @@ describe('Feedback Forwarder Worker', () => {
     it('should handle Resend API errors gracefully', async () => {
       mockSend.mockResolvedValueOnce({ error: { message: 'API Error' } });
 
+      const token = await getValidToken();
       const request = createRequest('POST', {
+        checktoken: token,
         email: 'john@example.com',
         message: 'Test'
       });
@@ -193,7 +282,9 @@ describe('Feedback Forwarder Worker', () => {
     it('should handle Resend exceptions gracefully', async () => {
       mockSend.mockRejectedValueOnce(new Error('Network error'));
 
+      const token = await getValidToken();
       const request = createRequest('POST', {
+        checktoken: token,
         email: 'john@example.com',
         message: 'Test'
       });
